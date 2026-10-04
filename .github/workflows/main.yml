@@ -1,0 +1,50 @@
+name: RDP
+on: workflow_dispatch:
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+    steps:
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Restart-Service -Name TermService -Force
+
+      - name: Create User
+        run: |
+          $pass = "P@ssw0rd12345!"
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          Try { New-LocalUser -Name "RDP" -Password $sec -AccountNeverExpires } Catch {}
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec -Args "/i $env:TEMP\tailscale.msi /quiet /norestart" -Wait
+
+      - name: Connect Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID
+          $ip = $null
+          for($i=0; $i -lt 15; $i++){
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            if($ip){ break }
+            Start-Sleep 5
+          }
+          echo "IP=$ip" >> $env:GITHUB_ENV
+          echo "IP is $ip"
+          echo "USER is RDP"
+          echo "PASS is $env:RDP_PASS"
+
+      - name: Keep Alive
+        run: |
+          Write-Host "=== CONNECT NOW ==="
+          Write-Host "Tailscale IP: $env:IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: P@ssw0rd12345!"
+          Write-Host "==================="
+          while($true){ Start-Sleep 300 }
